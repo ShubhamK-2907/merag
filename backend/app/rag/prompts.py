@@ -28,7 +28,10 @@ Knowledge base contents:
 Top retrieved excerpts (may be empty or irrelevant):
 {excerpts}
 
-Question: {question}"""
+Question: {question}
+
+Also return relevant_ids: the ids of the excerpts that contain facts helping to answer
+the question, even partially (empty if none)."""
 
 GRADE = """You are grading retrieved excerpts for relevance to a question.
 An excerpt is relevant if it contains facts that help answer the question, even partially.

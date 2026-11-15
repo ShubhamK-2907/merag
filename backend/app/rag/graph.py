@@ -1,12 +1,16 @@
 """Adaptive RAG pipeline as an explicit LangGraph state machine.
 
-    START -> contextualize -> route --index--> grade --relevant--> generate -> verify --ok--> END
-                                 |               |                    ^          |
-                                 |               +--none--> rewrite --+          +--unsupported--> generate (bounded)
-                                 |               |          (bounded) |
-                                 |               +--still none--> web_search ----+
+    START -> contextualize -> route+grade --relevant--> generate -> verify --ok--> END
+                                 |   |                     ^          |
+                                 |   +--none--> rewrite -> retrieve -> grade (bounded)
+                                 |   |                     |          +--unsupported--> generate (bounded)
+                                 |   +--still none--> web_search
                                  +--search--> web_search -> generate
                                  +--general--> general -> END
+
+The router grades the excerpts it retrieved in the same structured call, so a typical
+document question costs 3 LLM calls (route+grade, generate, verify), or 2 with
+VERIFY_ANSWERS=false. The standalone grade node only runs after a query rewrite.
 
 Ideas combined here:
   * Adaptive-RAG: route each query to the cheapest strategy that can answer it.
@@ -21,9 +25,8 @@ branch unit-testable with fakes and no network.
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal, Protocol
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
@@ -40,8 +43,13 @@ _MAX_CHUNK_CHARS = 1500
 
 # ---------- structured LLM outputs ----------
 class RouteDecision(BaseModel):
+    """Routing and first-pass relevance grading in ONE call (saves an LLM call per question)."""
+
     route: Route = Field(description="index | general | search")
     reason: str = Field(description="One short sentence explaining the choice.")
+    relevant_ids: list[int] = Field(
+        default_factory=list, description="Ids of excerpts that help answer the question (may be empty)."
+    )
 
 
 class GradeResult(BaseModel):
@@ -53,9 +61,16 @@ class VerifyResult(BaseModel):
     reason: str = Field(description="One short sentence.")
 
 
+class ChatModel(Protocol):
+    """What the graph needs from an LLM: a BaseChatModel or app.rag.llm.ChatChain (with fallbacks)."""
+
+    async def ainvoke(self, input: Any, /) -> BaseMessage: ...
+    def with_structured_output(self, schema: Any, /) -> Any: ...
+
+
 @dataclass(frozen=True)
 class GraphDeps:
-    llm: BaseChatModel
+    llm: ChatModel
     retrieve: Retriever
     web_search: WebSearcher | None
     settings: Settings
@@ -103,7 +118,7 @@ def build_graph(deps: GraphDeps):
         decision: RouteDecision = await router.ainvoke(
             prompts.ROUTE.format(
                 catalog=catalog or "(no documents uploaded)",
-                excerpts=_format_excerpts(chunks[:3]),
+                excerpts=_format_excerpts(chunks, limit=800),
                 question=state["query"],
             )
         )
@@ -112,13 +127,13 @@ def build_graph(deps: GraphDeps):
             chosen, note = "general", "No documents uploaded, answering from general knowledge."
         if chosen == "search" and deps.web_search is None:
             chosen, note = "general", "Web search is not configured, answering from general knowledge."
-        return {
-            "route": chosen,
-            "chunks": chunks,
-            "rewrites": 0,
-            "generations": 0,
-            "trace": [f"Routed to {chosen}: {note}"],
-        }
+        trace = [f"Routed to {chosen}: {note}"]
+        if chosen == "index":
+            # The router graded the excerpts in the same call; keep only the relevant ones.
+            keep = sorted({i for i in decision.relevant_ids if 0 <= i < len(chunks)})
+            trace.append(f"Graded chunks: {len(keep)}/{len(chunks)} relevant")
+            chunks = [chunks[i] for i in keep]
+        return {"route": chosen, "chunks": chunks, "rewrites": 0, "generations": 0, "trace": trace}
 
     async def retrieve(state: RAGState) -> dict:
         chunks = await deps.retrieve(state["user_id"], state["query"])
@@ -166,7 +181,7 @@ def build_graph(deps: GraphDeps):
 
     async def verify(state: RAGState) -> dict:
         context = _format_context(state)
-        if not context:
+        if not context or not s.verify_answers:
             return {"faithful": True, "trace": []}
         checker = llm.with_structured_output(VerifyResult)
         result: VerifyResult = await checker.ainvoke(prompts.VERIFY.format(context=context, answer=state["answer"]))
@@ -180,8 +195,10 @@ def build_graph(deps: GraphDeps):
         return {"route": "general", "answer": msg.text.strip(), "trace": ["Answered from general knowledge"]}
 
     # ---------- conditional edges ----------
-    def after_route(state: RAGState) -> Literal["grade", "web_search", "general"]:
-        return {"index": "grade", "search": "web_search"}.get(state["route"], "general")
+    def after_route(state: RAGState) -> Literal["generate", "rewrite", "web_search", "general"]:
+        if state["route"] == "index":
+            return after_grade(state)  # chunks were already graded inside the route call
+        return "web_search" if state["route"] == "search" else "general"
 
     def after_grade(state: RAGState) -> Literal["generate", "rewrite", "web_search", "general"]:
         if state.get("chunks"):

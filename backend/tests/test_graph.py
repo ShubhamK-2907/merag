@@ -15,8 +15,11 @@ class _Structured:
         self.parent, self.schema = parent, schema
 
     async def ainvoke(self, _prompt):
+        self.parent.structured_calls.append(self.schema.__name__)
         if self.schema is RouteDecision:
-            return RouteDecision(route=self.parent.route, reason="test")
+            # The router also grades: it consumes the first scripted grade when routing to the index.
+            ids = self.parent.grades.pop(0) if self.parent.route == "index" else []
+            return RouteDecision(route=self.parent.route, reason="test", relevant_ids=ids)
         if self.schema is GradeResult:
             return GradeResult(relevant_ids=self.parent.grades.pop(0))
         if self.schema is VerifyResult:
@@ -30,6 +33,7 @@ class FakeLLM:
         self.grades = grades if grades is not None else [[0]]
         self.verdicts = verdicts if verdicts is not None else [True]
         self.prompts: list = []
+        self.structured_calls: list[str] = []
 
     def with_structured_output(self, schema):
         return _Structured(self, schema)
@@ -82,6 +86,26 @@ async def test_index_route_happy_path():
     assert out["chunks"] == [CHUNK]
     assert out["generations"] == 1
     assert calls == {"retrieve": 1, "web": 0}  # route node's retrieval is reused, not repeated
+
+
+@pytest.mark.asyncio
+async def test_routing_and_grading_share_one_llm_call():
+    llm = FakeLLM(route="index")
+    graph, _ = make(llm)
+    out = await graph.ainvoke(inputs())
+    # route+grade (1 structured call) + generate (1 text call) + verify (1 structured call) = 3 calls
+    assert llm.structured_calls == ["RouteDecision", "VerifyResult"]
+    assert len(llm.prompts) == 1
+    assert "Graded chunks: 1/1 relevant" in out["trace"]
+
+
+@pytest.mark.asyncio
+async def test_verify_can_be_disabled_to_save_a_call():
+    llm = FakeLLM(route="index", verdicts=[])
+    graph, _ = make(llm, verify_answers=False)
+    out = await graph.ainvoke(inputs())
+    assert llm.structured_calls == ["RouteDecision"]
+    assert out["answer"] == "final answer [1]"
 
 
 @pytest.mark.asyncio
@@ -154,3 +178,25 @@ def test_rate_limit_errors_get_a_clear_message():
 
     assert "rate limit" in _error_detail(RuntimeError("429 RESOURCE_EXHAUSTED quota"))
     assert _error_detail(ValueError("boom")) == "The assistant hit an error. Please try again."
+
+
+async def test_chat_chain_falls_back_when_a_model_is_rate_limited():
+    from langchain_core.language_models import FakeListChatModel
+
+    from app.rag.llm import ChatChain
+
+    class RateLimited(FakeListChatModel):
+        async def _agenerate(self, *args, **kwargs):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    chain = ChatChain([RateLimited(responses=["never"]), FakeListChatModel(responses=["from fallback"])])
+    assert (await chain.ainvoke("hi")).text == "from fallback"
+
+
+def test_llm_fallbacks_setting_is_parsed_and_validated():
+    s = Settings(llm_fallbacks="gemini:gemini-3.1-flash-lite, groq:openai/gpt-oss-20b")
+    assert s.fallback_models() == [("gemini", "gemini-3.1-flash-lite"), ("groq", "openai/gpt-oss-20b")]
+    groq = Settings(llm_provider="groq")
+    assert groq.chat_model == "openai/gpt-oss-20b" and groq.embedding_provider == "gemini"
+    with pytest.raises(ValueError):
+        Settings(llm_fallbacks="gpt-4o")

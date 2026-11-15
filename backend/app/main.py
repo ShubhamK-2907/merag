@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("JWT_SECRET must be set in production")
     if not settings.llm_api_key:
         logger.warning("No API key for LLM provider %r: chat and uploads will fail", settings.llm_provider)
+    if not settings.api_key_for(settings.embedding_provider):
+        logger.warning("No API key for embedding provider %r: uploads will fail", settings.embedding_provider)
+    chain = [f"{settings.llm_provider}:{settings.chat_model}", *(f"{p}:{m}" for p, m in settings.fallback_models())]
+    logger.info("Chat models (in fallback order): %s", " -> ".join(chain))
     await mongo.connect()
     await mongo.ensure_indexes()
     yield

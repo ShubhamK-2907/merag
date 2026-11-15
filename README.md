@@ -3,7 +3,7 @@
 An authenticated, multi-tenant **adaptive retrieval-augmented generation** app. Upload your own documents and ask questions; a LangGraph state machine decides, per question, whether to answer from **your documents**, **general knowledge**, or the **web**, then grades its retrieval, rewrites weak queries, and verifies the answer is grounded before returning it. Progress and tokens stream live to the UI.
 
 ```
-React SPA ──SSE/JSON──▶ FastAPI ──▶ LangGraph pipeline ──▶ Gemini or OpenAI (chat + embeddings)
+React SPA ──SSE/JSON──▶ FastAPI ──▶ LangGraph pipeline ──▶ free Gemini model chain (+ optional Groq) with automatic fallback
                            │                │
                            │                └──▶ Tavily (optional web search)
                            └──▶ MongoDB Atlas: users · conversations · messages · documents · chunks + $vectorSearch
@@ -12,10 +12,10 @@ React SPA ──SSE/JSON──▶ FastAPI ──▶ LangGraph pipeline ──▶
 ## The pipeline
 
 ```
-START → contextualize → route ─index──▶ grade ─relevant──▶ generate → verify ─grounded─▶ END
-                          │               │                   ▲          └─not grounded─▶ generate (once)
-                          │               ├─none─▶ rewrite ─▶ retrieve ─▶ grade (bounded)
-                          │               └─still none─▶ web_search ─▶ generate
+START → contextualize → route+grade ─relevant──▶ generate → verify ─grounded─▶ END
+                          │   │                       ▲          └─not grounded─▶ generate (once)
+                          │   ├─none─▶ rewrite ─▶ retrieve ─▶ grade (bounded)
+                          │   └─still none─▶ web_search ─▶ generate
                           ├─search──▶ web_search ─▶ generate
                           └─general─▶ general ─▶ END
 ```
@@ -23,15 +23,28 @@ START → contextualize → route ─index──▶ grade ─relevant──▶ g
 | Node | What it does |
 |---|---|
 | `contextualize` | Rewrites a follow-up ("what about his skills?") into a standalone question using chat history |
-| `route` | Retrieves top-k chunks for the user and asks the LLM (structured output) to pick `index` / `general` / `search`, given a catalog of the user's documents |
-| `grade` | One batched LLM call marks which retrieved chunks are actually relevant (Corrective RAG) |
+| `route` | Retrieves top-k chunks for the user, then **one** structured LLM call picks `index` / `general` / `search` (given a catalog of the user's documents) **and** marks which excerpts are relevant |
+| `grade` | After a query rewrite only: one batched LLM call marks which retrieved chunks are relevant (Corrective RAG) |
 | `rewrite` | Reformulates the query for better semantic recall when nothing relevant came back |
 | `web_search` | Tavily search, used for fresh info or as a fallback when the docs don't cover it |
 | `generate` | Answers strictly from numbered context, with inline `[n]` citations |
 | `verify` | Checks every claim is supported by the context; regenerates once in stricter mode if not (Self-RAG style) |
 | `general` | Plain LLM answer with conversation history |
 
-All loops are bounded (`MAX_REWRITES`, `MAX_REGENERATIONS`), so a bad query can never spin.
+All loops are bounded (`MAX_REWRITES`, `MAX_REGENERATIONS`), so a bad query can never spin. A document question costs 3 LLM calls (2 with `VERIFY_ANSWERS=false`); a general question costs 2.
+
+## Free-tier LLMs and automatic fallback
+
+Free tiers rate-limit **per model**, so the chat model is a chain (`rag/llm.py`, LangChain `with_fallbacks`): when one model returns a 429, the same request moves to the next. Each model has its own quota, so three Gemini models on one free key roughly triple capacity.
+
+```env
+LLM_PROVIDER=gemini                     # primary: gemini-flash-lite-latest
+LLM_FALLBACKS=gemini:gemini-3.1-flash-lite,gemini:gemini-2.5-flash-lite,groq:openai/gpt-oss-20b
+GROQ_API_KEY=                           # optional second free provider (console.groq.com); skipped if empty
+VERIFY_ANSWERS=true                     # false saves one call per document answer
+```
+
+Embeddings always use Gemini (`gemini-embedding-001`, its own quota), since Groq has no embedding API.
 
 ## Features
 
@@ -45,7 +58,7 @@ All loops are bounded (`MAX_REWRITES`, `MAX_REGENERATIONS`), so a bad query can 
 
 ## Tech stack
 
-**Backend:** Python 3.12, FastAPI, LangGraph, LangChain (Google GenAI / OpenAI, switchable via `LLM_PROVIDER`), PyMongo (native async), PyJWT, bcrypt, slowapi, sse-starlette, pypdf
+**Backend:** Python 3.12, FastAPI, LangGraph, LangChain (Google GenAI / Groq / OpenAI, switchable via `LLM_PROVIDER`, with a fallback chain), PyMongo (native async), PyJWT, bcrypt, slowapi, sse-starlette, pypdf
 **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router, react-markdown
 **Infra:** MongoDB Atlas (+ Vector Search), Render (Docker), GitHub Actions CI
 
@@ -85,7 +98,7 @@ ruff check app tests
 2. **Render**: New → Blueprint → select this repo. `render.yaml` defines the service; you'll be prompted for `MONGODB_URI`, `GOOGLE_API_KEY` (free from Google AI Studio), and optionally `TAVILY_API_KEY`. `JWT_SECRET` is generated automatically.
 3. Open the service URL. The Atlas vector index builds itself on first boot (takes about a minute; until it's queryable the app uses the exact-scan fallback).
 
-> Everything above runs at $0. Gemini's free tier is rate-limited (each question makes ~4 LLM calls), and Google may use free-tier inputs to improve its products, so don't upload sensitive documents.
+> Everything above runs at $0. Gemini's free tier is rate-limited (each question makes 2–3 LLM calls, spread over a fallback chain of models), and Google may use free-tier inputs to improve its products, so don't upload sensitive documents.
 >
 > Free-tier note: Render free services sleep after ~15 min idle; the first request after that takes ~30–60 s.
 

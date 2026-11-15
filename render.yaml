@@ -23,6 +23,12 @@ services:
         value: gemini
       - key: GOOGLE_API_KEY
         sync: false
+      # Each model has its own free quota; on a 429 the request moves to the next one.
+      # The groq entry is skipped automatically if GROQ_API_KEY is left empty.
+      - key: LLM_FALLBACKS
+        value: gemini:gemini-3.1-flash-lite,gemini:gemini-2.5-flash-lite,groq:openai/gpt-oss-20b
+      - key: GROQ_API_KEY
+        sync: false
       - key: TAVILY_API_KEY
         sync: false
       # The UI is served from the same origin, so CORS only matters for local dev.
