@@ -46,7 +46,7 @@ def fake_embeddings(monkeypatch):
     monkeypatch.setattr(ingestion, "get_embeddings", lambda: emb)
     monkeypatch.setattr(vectorstore, "get_embeddings", lambda: emb)
 
-    async def _describe(text: str) -> str:
+    async def _describe(filename: str, text: str) -> str:
         return "Auto description"
 
     monkeypatch.setattr(ingestion, "describe", _describe)

@@ -20,6 +20,13 @@ from app.services import conversations, documents
 logger = logging.getLogger(__name__)
 
 
+def _error_detail(exc: Exception) -> str:
+    """User-facing message; free-tier LLM quotas are the most common failure, so name them."""
+    if "RESOURCE_EXHAUSTED" in str(exc) or "429" in str(exc) or "RateLimit" in type(exc).__name__:
+        return "The AI model's free-tier rate limit was reached. Wait about a minute, then try again."
+    return "The assistant hit an error. Please try again."
+
+
 def _sources(state: dict) -> list[Source]:
     if state.get("route") == "search":
         return [
@@ -61,8 +68,10 @@ async def run_turn(user_id: str, conversation: dict, content: str) -> AsyncItera
         async for mode, payload in get_graph().astream(inputs, stream_mode=["updates", "messages"]):
             if mode == "messages":
                 chunk, meta = payload
-                if meta.get("langgraph_node") in ANSWER_NODES and isinstance(chunk.content, str) and chunk.content:
-                    yield {"event": "token", "data": {"text": chunk.content}}
+                # .text flattens content blocks (Gemini 3 returns a list with thought signatures, not a str).
+                text = chunk.text if meta.get("langgraph_node") in ANSWER_NODES else ""
+                if text:
+                    yield {"event": "token", "data": {"text": text}}
                 continue
             for node, update in payload.items():
                 update = update or {}
@@ -75,9 +84,9 @@ async def run_turn(user_id: str, conversation: dict, content: str) -> AsyncItera
                     and (final.get("generations", 0) <= settings.max_regenerations)
                 ):
                     yield {"event": "reset", "data": {}}
-    except Exception:
+    except Exception as exc:
         logger.exception("RAG pipeline failed for conversation %s", conversation_id)
-        yield {"event": "error", "data": {"detail": "The assistant hit an error. Please try again."}}
+        yield {"event": "error", "data": {"detail": _error_detail(exc)}}
         return
 
     answer = final.get("answer") or "I couldn't produce an answer for that."

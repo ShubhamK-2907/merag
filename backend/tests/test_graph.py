@@ -134,3 +134,23 @@ async def test_follow_up_is_contextualized():
     out = await graph.ainvoke(inputs(question="what does he know?", history=history))
     assert out["query"] == "What does Shubham know?"
     assert "Standalone question" in llm.prompts[0]
+
+
+async def test_describe_falls_back_when_llm_fails(monkeypatch):
+    """A rate-limited summary call must not fail the upload."""
+    from app.rag import ingestion
+
+    class Boom:
+        async def ainvoke(self, _):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(ingestion, "get_chat_model", lambda: Boom())
+    out = await ingestion.describe("cv.pdf", "Jane Doe\n  Senior ML Engineer   at Acme")
+    assert out == "cv.pdf: Jane Doe Senior ML Engineer at Acme"
+
+
+def test_rate_limit_errors_get_a_clear_message():
+    from app.services.chat import _error_detail
+
+    assert "rate limit" in _error_detail(RuntimeError("429 RESOURCE_EXHAUSTED quota"))
+    assert _error_detail(ValueError("boom")) == "The assistant hit an error. Please try again."

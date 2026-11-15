@@ -24,7 +24,7 @@ async def ingest(user_id: str, filename: str, data: bytes, description: str | No
     text = await ingestion.extract_text(ext, data)
     pieces = ingestion.split(text)
     prepared = await ingestion.embed(pieces)
-    description = (description or "").strip() or await ingestion.describe(text)
+    description = (description or "").strip() or await ingestion.describe(filename, text)
 
     db = get_db()
     doc = {

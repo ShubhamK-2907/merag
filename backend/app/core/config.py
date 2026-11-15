@@ -8,7 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # provider -> (chat model, embedding model, embedding dimensions)
 _PROVIDER_DEFAULTS = {
-    "gemini": ("gemini-flash-latest", "gemini-embedding-001", 768),
+    # flash-lite answers in ~1s; full flash with default thinking took 15-60s+ per call on the free tier.
+    "gemini": ("gemini-flash-lite-latest", "gemini-embedding-001", 768),
     "openai": ("gpt-4o-mini", "text-embedding-3-small", 1536),
 }
 
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     # Leave empty to use the provider defaults below.
     chat_model: str = ""
+    # Gemini 3+ "thinking" depth. Each question makes ~4 calls, so keep this low for responsive answers.
+    gemini_thinking_level: Literal["minimal", "low", "medium", "high"] = "low"
     embedding_model: str = ""
     # Must match the Atlas vector index; changing it requires dropping that index.
     embedding_dimensions: int = 0

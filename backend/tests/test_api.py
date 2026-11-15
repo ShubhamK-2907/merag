@@ -72,13 +72,18 @@ async def test_upload_rejects_bad_type(client):
 
 
 async def test_chat_streams_and_persists(client, monkeypatch):
+    from langchain_core.messages import AIMessageChunk
+
     import app.services.chat as chat_service
 
     class FakeGraph:
         async def astream(self, inputs, stream_mode):
             yield "updates", {"route": {"route": "general", "trace": ["Routed to general: hi"]}}
-            yield "messages", (type("C", (), {"content": "Hello "})(), {"langgraph_node": "general"})
-            yield "messages", (type("C", (), {"content": "there"})(), {"langgraph_node": "general"})
+            yield "messages", (AIMessageChunk(content="Hello "), {"langgraph_node": "general"})
+            # Gemini 3 streams content blocks (with thought signatures) instead of a plain string.
+            blocks = [{"type": "text", "text": "there", "extras": {"signature": "sig"}}]
+            yield "messages", (AIMessageChunk(content=blocks), {"langgraph_node": "general"})
+            yield "messages", (AIMessageChunk(content="internal"), {"langgraph_node": "grade"})
             yield "updates", {"general": {"route": "general", "answer": "Hello there", "trace": ["Answered"]}}
 
     monkeypatch.setattr(chat_service, "get_graph", lambda: FakeGraph())
@@ -98,7 +103,8 @@ async def test_chat_streams_and_persists(client, monkeypatch):
                 events.append((event, json.loads(line.split(":", 1)[1])))
 
     kinds = [e for e, _ in events]
-    assert kinds.count("token") == 2 and kinds[-1] == "done"
+    assert kinds.count("token") == 2 and kinds[-1] == "done"  # the "grade" chunk is not streamed
+    assert "".join(d["text"] for e, d in events if e == "token") == "Hello there"
     final = events[-1][1]["message"]
     assert final["content"] == "Hello there" and final["route"] == "general"
 

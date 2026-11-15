@@ -92,7 +92,7 @@ def build_graph(deps: GraphDeps):
         if not history:
             return {"query": question, "trace": []}
         msg = await llm.ainvoke(prompts.CONTEXTUALIZE.format(history=_format_history(history), question=question))
-        query = str(msg.content).strip() or question
+        query = msg.text.strip() or question
         trace = [f"Resolved follow-up into: “{query}”"] if query != question else []
         return {"query": query, "trace": trace}
 
@@ -138,7 +138,7 @@ def build_graph(deps: GraphDeps):
 
     async def rewrite(state: RAGState) -> dict:
         msg = await llm.ainvoke(prompts.REWRITE.format(question=state["query"]))
-        query = str(msg.content).strip() or state["query"]
+        query = msg.text.strip() or state["query"]
         return {
             "query": query,
             "rewrites": state.get("rewrites", 0) + 1,
@@ -159,7 +159,7 @@ def build_graph(deps: GraphDeps):
             )
         )
         return {
-            "answer": str(msg.content).strip(),
+            "answer": msg.text.strip(),
             "generations": n + 1,
             "trace": ["Generated grounded answer" if n == 0 else "Regenerated with stricter grounding"],
         }
@@ -177,7 +177,7 @@ def build_graph(deps: GraphDeps):
         history = (state.get("history") or [])[-s.history_window :]
         messages = [SystemMessage(prompts.GENERAL_SYSTEM), *history, HumanMessage(state["question"])]
         msg = await llm.ainvoke(messages)
-        return {"route": "general", "answer": str(msg.content).strip(), "trace": ["Answered from general knowledge"]}
+        return {"route": "general", "answer": msg.text.strip(), "trace": ["Answered from general knowledge"]}
 
     # ---------- conditional edges ----------
     def after_route(state: RAGState) -> Literal["grade", "web_search", "general"]:

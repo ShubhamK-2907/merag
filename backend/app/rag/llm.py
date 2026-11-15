@@ -14,9 +14,14 @@ def get_chat_model() -> BaseChatModel:
     if s.llm_provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        # Generous retries: the free tier rate-limits (429) aggressively.
+        # Retries cover free-tier 429s; low thinking keeps each of the ~4 calls per question around a second.
         return ChatGoogleGenerativeAI(
-            model=s.chat_model, temperature=0, google_api_key=s.google_api_key, max_retries=6, timeout=60
+            model=s.chat_model,
+            temperature=0,
+            google_api_key=s.google_api_key,
+            thinking_level=s.gemini_thinking_level,
+            max_retries=3,
+            timeout=45,
         )
     from langchain_openai import ChatOpenAI
 

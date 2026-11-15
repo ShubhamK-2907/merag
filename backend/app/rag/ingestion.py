@@ -1,6 +1,7 @@
 """Document ingestion: parse -> chunk -> embed. Pure functions, no DB access."""
 
 import io
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from app.rag import prompts
 from app.rag.llm import get_chat_model, get_embeddings
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}
+logger = logging.getLogger(__name__)
 _EMBED_BATCH = 64
 
 
@@ -73,7 +75,17 @@ async def embed(chunks: list[str]) -> list[PreparedChunk]:
     return out
 
 
-async def describe(text: str) -> str:
-    """Auto-generate a catalog description used by the router."""
-    msg = await get_chat_model().ainvoke(prompts.SUMMARIZE_DOC.format(excerpt=text[:2500]))
-    return str(msg.content).strip()[:300]
+async def describe(filename: str, text: str) -> str:
+    """Auto-generate a catalog description used by the router.
+
+    Best-effort: a rate-limited or failed LLM call must not sink an upload whose
+    embeddings already succeeded, so fall back to the file's opening text.
+    """
+    try:
+        msg = await get_chat_model().ainvoke(prompts.SUMMARIZE_DOC.format(excerpt=text[:2500]))
+        if summary := msg.text.strip():
+            return summary[:300]
+    except Exception:
+        logger.warning("Auto-description failed for %s; using an excerpt instead", filename, exc_info=True)
+    excerpt = " ".join(text.split())[:240]
+    return f"{filename}: {excerpt}"[:300]
