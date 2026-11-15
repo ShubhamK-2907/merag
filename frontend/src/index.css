@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+/* Dark mode follows the OS setting. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/*
+ * Design tokens. A warm-neutral palette with one accent colour; every component
+ * uses these semantic names (canvas/surface/ink/muted/line/accent) instead of raw colours,
+ * so light and dark themes are one variable swap.
+ */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --color-canvas: #f5f5f4;
+  --color-surface: #ffffff;
+  --color-subtle: #f0efed;
+  --color-line: #e5e3e0;
+  --color-ink: #1c1917;
+  --color-muted: #6b6560;
+  --color-faint: #a29d98;
+  --color-accent: #4f46e5;
+  --color-danger: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #0e0d0c;
+    --color-surface: #161514;
+    --color-subtle: #22201e;
+    --color-line: #2c2a27;
+    --color-ink: #f5f5f4;
+    --color-muted: #a8a29e;
+    --color-faint: #6f6a65;
+    --color-accent: #818cf8;
+    --color-danger: #f87171;
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  body {
+    @apply bg-canvas font-sans text-ink;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-accent) 25%, transparent);
+  }
+}

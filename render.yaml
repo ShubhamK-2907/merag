@@ -1,0 +1,29 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Secrets marked `sync: false` are prompted for once in the Render UI and never live in git.
+services:
+  - type: web
+    name: merag
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: merag
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: CHAT_MODEL
+        value: gpt-4o-mini
+      # The UI is served from the same origin, so CORS only matters for local dev.
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
