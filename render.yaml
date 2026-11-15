@@ -18,12 +18,13 @@ services:
         sync: false
       - key: MONGODB_DB
         value: merag
-      - key: OPENAI_API_KEY
+      # Free tier: Google AI Studio key. To use OpenAI instead set LLM_PROVIDER=openai + OPENAI_API_KEY.
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GOOGLE_API_KEY
         sync: false
       - key: TAVILY_API_KEY
         sync: false
-      - key: CHAT_MODEL
-        value: gpt-4o-mini
       # The UI is served from the same origin, so CORS only matters for local dev.
       - key: CORS_ORIGINS
         value: http://localhost:5173

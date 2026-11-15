@@ -1,9 +1,16 @@
 """Application settings, loaded once from environment variables (12-factor)."""
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# provider -> (chat model, embedding model, embedding dimensions)
+_PROVIDER_DEFAULTS = {
+    "gemini": ("gemini-flash-latest", "gemini-embedding-001", 768),
+    "openai": ("gpt-4o-mini", "text-embedding-3-small", 1536),
+}
 
 
 class Settings(BaseSettings):
@@ -29,10 +36,15 @@ class Settings(BaseSettings):
     vector_index_name: str = "chunk_vector_index"
 
     # --- LLMs ---
+    # "gemini" works on Google AI Studio's free tier; "openai" needs a paid key.
+    llm_provider: Literal["gemini", "openai"] = "gemini"
+    google_api_key: str = ""
     openai_api_key: str = ""
-    chat_model: str = "gpt-4o-mini"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    # Leave empty to use the provider defaults below.
+    chat_model: str = ""
+    embedding_model: str = ""
+    # Must match the Atlas vector index; changing it requires dropping that index.
+    embedding_dimensions: int = 0
     tavily_api_key: str = ""
 
     # --- RAG tuning ---
@@ -43,6 +55,18 @@ class Settings(BaseSettings):
     max_regenerations: int = 1
     history_window: int = 6
     max_upload_mb: int = 10
+
+    @model_validator(mode="after")
+    def _provider_defaults(self) -> "Settings":
+        chat, embed, dims = _PROVIDER_DEFAULTS[self.llm_provider]
+        self.chat_model = self.chat_model or chat
+        self.embedding_model = self.embedding_model or embed
+        self.embedding_dimensions = self.embedding_dimensions or dims
+        return self
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.google_api_key if self.llm_provider == "gemini" else self.openai_api_key
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -3,7 +3,7 @@
 An authenticated, multi-tenant **adaptive retrieval-augmented generation** app. Upload your own documents and ask questions; a LangGraph state machine decides, per question, whether to answer from **your documents**, **general knowledge**, or the **web**, then grades its retrieval, rewrites weak queries, and verifies the answer is grounded before returning it. Progress and tokens stream live to the UI.
 
 ```
-React SPA ──SSE/JSON──▶ FastAPI ──▶ LangGraph pipeline ──▶ OpenAI (chat + embeddings)
+React SPA ──SSE/JSON──▶ FastAPI ──▶ LangGraph pipeline ──▶ Gemini or OpenAI (chat + embeddings)
                            │                │
                            │                └──▶ Tavily (optional web search)
                            └──▶ MongoDB Atlas: users · conversations · messages · documents · chunks + $vectorSearch
@@ -45,7 +45,7 @@ All loops are bounded (`MAX_REWRITES`, `MAX_REGENERATIONS`), so a bad query can 
 
 ## Tech stack
 
-**Backend:** Python 3.12, FastAPI, LangGraph, LangChain-OpenAI, PyMongo (native async), PyJWT, bcrypt, slowapi, sse-starlette, pypdf
+**Backend:** Python 3.12, FastAPI, LangGraph, LangChain (Google GenAI / OpenAI, switchable via `LLM_PROVIDER`), PyMongo (native async), PyJWT, bcrypt, slowapi, sse-starlette, pypdf
 **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router, react-markdown
 **Infra:** MongoDB Atlas (+ Vector Search), Render (Docker), GitHub Actions CI
 
@@ -59,7 +59,7 @@ brew services start mongodb-community        # or: docker run -d -p 27017:27017 
 cd backend
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env                         # add OPENAI_API_KEY (and optionally TAVILY_API_KEY)
+cp .env.example .env                         # add GOOGLE_API_KEY (free) or set LLM_PROVIDER=openai + OPENAI_API_KEY
 uvicorn app.main:app --reload                # http://localhost:8000/api/docs
 
 # 3. Frontend
@@ -82,9 +82,11 @@ ruff check app tests
 ## Deploy (Render + MongoDB Atlas)
 
 1. **MongoDB Atlas**: create a free cluster, a database user, and allow network access (`0.0.0.0/0` for Render's free tier). Copy the `mongodb+srv://…` connection string.
-2. **Render**: New → Blueprint → select this repo. `render.yaml` defines the service; you'll be prompted for `MONGODB_URI`, `OPENAI_API_KEY`, and optionally `TAVILY_API_KEY`. `JWT_SECRET` is generated automatically.
+2. **Render**: New → Blueprint → select this repo. `render.yaml` defines the service; you'll be prompted for `MONGODB_URI`, `GOOGLE_API_KEY` (free from Google AI Studio), and optionally `TAVILY_API_KEY`. `JWT_SECRET` is generated automatically.
 3. Open the service URL. The Atlas vector index builds itself on first boot (takes about a minute; until it's queryable the app uses the exact-scan fallback).
 
+> Everything above runs at $0. Gemini's free tier is rate-limited (each question makes ~4 LLM calls), and Google may use free-tier inputs to improve its products, so don't upload sensitive documents.
+>
 > Free-tier note: Render free services sleep after ~15 min idle; the first request after that takes ~30–60 s.
 
 ## Project layout

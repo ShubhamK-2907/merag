@@ -15,7 +15,7 @@ import pytest_asyncio
 
 os.environ.setdefault("JWT_SECRET", "test-secret-test-secret-test-secret")
 os.environ["MONGODB_DB"] = f"merag_test_{uuid.uuid4().hex[:8]}"
-os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 
 
 class FakeEmbeddings:

@@ -28,8 +28,8 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
     if settings.is_production and settings.jwt_secret == _DEFAULT_SECRET:
         raise RuntimeError("JWT_SECRET must be set in production")
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY is not set: chat and uploads will fail")
+    if not settings.llm_api_key:
+        logger.warning("No API key for LLM provider %r: chat and uploads will fail", settings.llm_provider)
     await mongo.connect()
     await mongo.ensure_indexes()
     yield
