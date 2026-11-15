@@ -24,6 +24,7 @@ branch unit-testable with fakes and no network.
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any, Literal, Protocol
 
@@ -77,6 +78,11 @@ class GraphDeps:
 
 
 # ---------- helpers ----------
+def _today() -> str:
+    """Lets the model resolve "Present"/"Current" in date ranges (e.g. years of experience)."""
+    return datetime.now(UTC).strftime("%B %d, %Y")
+
+
 def _format_history(history: list[BaseMessage]) -> str:
     return "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}" for m in history)
 
@@ -168,6 +174,7 @@ def build_graph(deps: GraphDeps):
         n = state.get("generations", 0)
         msg = await llm.ainvoke(
             prompts.GENERATE.format(
+                today=_today(),
                 strict=prompts.STRICT_SUFFIX if n > 0 else "",
                 context=_format_context(state) or "(no context found)",
                 question=state["query"],
@@ -184,7 +191,9 @@ def build_graph(deps: GraphDeps):
         if not context or not s.verify_answers:
             return {"faithful": True, "trace": []}
         checker = llm.with_structured_output(VerifyResult)
-        result: VerifyResult = await checker.ainvoke(prompts.VERIFY.format(context=context, answer=state["answer"]))
+        result: VerifyResult = await checker.ainvoke(
+            prompts.VERIFY.format(today=_today(), context=context, answer=state["answer"])
+        )
         label = "passed" if result.faithful else "failed"
         return {"faithful": result.faithful, "trace": [f"Grounding check {label}: {result.reason}"]}
 
